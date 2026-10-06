@@ -511,16 +511,50 @@ def main(argv: list[str] | None = None) -> int:
         panel_steps = _monthly_inputs(panels, card, card_path, a.asof)
     except HorizonMetadataError as exc:
         raise SystemExit(str(exc)) from None
-    samples, stats = _draw(
-        panels,
-        assets,
-        horizons,
-        a.asof,
-        n_draws,
-        a.seed,
-        target_type=tgt.get("target_type", "level"),
-        panel_steps=panel_steps,
+    # samples, stats = _draw(
+    #     panels,
+    #     assets,
+    #     horizons,
+    #     a.asof,
+    #     n_draws,
+    #     a.seed,
+    #     target_type=tgt.get("target_type", "level"),
+    #     panel_steps=panel_steps,
+    # )
+
+    use_ar = (
+        "rates_daily" in panels
+        and tgt.get("target_type", "level") == "level"
+        and tgt.get(
+            "target_frequency",
+            card.get("metadata", {}).get("target_frequency"),
+        ) == "daily"
     )
+
+    if use_ar:
+        from baselines.base import ForecastRequest
+        from experiments.ar.model import AR1Baseline
+
+        request = ForecastRequest(
+            panels={"rates_daily": panels["rates_daily"]},
+            asof=a.asof,
+            asset_ids=assets,
+            horizons=horizons,
+            n_draws=n_draws,
+        )
+        result = AR1Baseline().forecast(request)
+        samples, stats = result.samples, result.metadata
+    else:
+        samples, stats = _draw(
+            panels,
+            assets,
+            horizons,
+            a.asof,
+            n_draws,
+            a.seed,
+            target_type=tgt.get("target_type", "level"),
+            panel_steps=panel_steps,
+        )
 
     out_dir = a.out.parent
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -545,7 +579,11 @@ def main(argv: list[str] | None = None) -> int:
                 "target": tgt.get("target_type", "level"),
                 "rationale": {
                     "file": _RATIONALE_NAME,
-                    "method": "joint gaussian random walk, no text",
+                    # "method": "joint gaussian random walk, no text",
+                    "method": (
+                        "AR(1) with correlated residuals, no text"
+                        if use_ar else "joint gaussian random walk, no text"
+                    ),
                 },
             },
             indent=2,
@@ -553,9 +591,23 @@ def main(argv: list[str] | None = None) -> int:
         + "\n"
     )
 
-    (out_dir / _RATIONALE_NAME).write_text(
-        _rationale(unit_id, a.asof, assets, horizons, n_draws, stats, a.text)
-    )
+    # (out_dir / _RATIONALE_NAME).write_text(
+    #     _rationale(unit_id, a.asof, assets, horizons, n_draws, stats, a.text)
+    # )
+    if use_ar:
+        rationale = (
+            f"# Forecast rationale — {unit_id}\n\n"
+            f"As of {a.asof}; {n_draws} joint forecast draws.\n\n"
+            "## Method\n\n"
+            "Fit one AR(1) to each daily rate series using observations "
+            "no later than the as-of date. Simulate future values with "
+            "correlated fitted residuals. No text was used.\n"
+            )
+    else:
+        rationale = _rationale(
+            unit_id, a.asof, assets, horizons, n_draws, stats, a.text
+        )
+    (out_dir / _RATIONALE_NAME).write_text(rationale)
 
     print(f"wrote {a.out.name}, forecast_meta.json and {_RATIONALE_NAME} to {out_dir}")
     print(f"  {len(assets)} asset(s) x {len(horizons)} horizon(s), {n_draws} draws")

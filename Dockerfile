@@ -47,6 +47,8 @@ RUN pip install --no-cache-dir \
 
 WORKDIR /work
 COPY qfbench2_track_forecasting /opt/qfbench2_track_forecasting
+COPY baselines /opt/baselines
+COPY experiments/ar /opt/experiments/ar
 ENV PYTHONPATH=/opt
 
 # The verb, as an executable on PATH.
